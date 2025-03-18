@@ -17,6 +17,7 @@ type AsyncLogOption func(*AsyncLogOpt)
 
 type AsyncLog struct {
 	receiver Receiver
+	level    slog.Level
 }
 
 func WithFile(filePath, filename string) AsyncLogOption {
@@ -56,9 +57,15 @@ func NewAsyncLog(opts ...AsyncLogOption) *AsyncLog {
 		writer = NewStdWriter()
 	}
 
-	return &AsyncLog{
-		receiver: NewNormalReceiver(writer, asyncLogOpt.Level),
+	log := &AsyncLog{
+		receiver: NewNormalReceiver(writer),
+		level:    asyncLogOpt.Level,
 	}
+
+	logger := slog.New(log)
+	slog.SetDefault(logger)
+
+	return log
 }
 
 func (a *AsyncLog) Close() error {
@@ -72,25 +79,29 @@ func (a *AsyncLog) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle implements slog.Handler interface
 func (a *AsyncLog) Handle(ctx context.Context, r slog.Record) error {
-	// 创建属性切片来存储所有属性
-	attrs := make([]slog.Attr, 0, r.NumAttrs())
-
-	// 添加记录中的属性
-	r.Attrs(func(attr slog.Attr) bool {
-		attrs = append(attrs, attr)
-		return true
-	})
-
-	// 创建日志事件
-	event := LogEntry{
-		Time:    r.Time,
-		Level:   r.Level,
-		Message: r.Message,
-		Attrs:   attrs,
+	if r.Level < a.level {
+		return nil
 	}
 
+	buf := GetBytesBuffer()
+	buf.SetLevel(r.Level)
+	buf.WriteString(r.Time.Format(TimeFormat))
+	buf.WriteString(Split)
+	buf.WriteString(r.Level.String())
+	buf.WriteString(Split)
+	buf.WriteString(r.Message)
+
+	r.Attrs(func(attr slog.Attr) bool {
+		buf.WriteString(Split)
+		buf.WriteString(attr.Key)
+		buf.WriteString(ValueSplit)
+		buf.WriteString(attr.Value.String())
+		return true
+	})
+	buf.WriteString(NewLine)
+
 	// 发送到接收器
-	return a.receiver.Put(event)
+	return a.receiver.Put(buf)
 }
 
 // WithAttrs implements slog.Handler interface

@@ -14,13 +14,14 @@ const (
 )
 
 type FileWriter struct {
-	f        *os.File
-	filePath string
-	filename string
-	dir      string
-	bufio.Writer
+	f          *os.File
+	filePath   string
+	filename   string
+	dir        string
+	writer     *bufio.Writer
 	lastRotate time.Time
 	maxSize    int
+	fileSize   int64
 }
 
 func NewFileWriter(filePath, filename string, maxSize int) WriterSync {
@@ -32,7 +33,7 @@ func NewFileWriter(filePath, filename string, maxSize int) WriterSync {
 	}
 
 	if maxSize <= 0 {
-		maxSize = DefaultFileSize
+		fw.maxSize = DefaultFileSize
 	}
 
 	fw.lastRotate = time.Now()
@@ -48,14 +49,15 @@ func (w *FileWriter) Write(p []byte) (n int, err error) {
 	if err := w.Rotate(); err != nil {
 		return 0, err
 	}
-	return w.Writer.Write(p)
+	w.fileSize += int64(len(p))
+	return w.writer.Write(p)
 }
 
 func (w *FileWriter) Sync() error {
 	if w.f == nil {
 		return nil
 	}
-	if err := w.Writer.Flush(); err != nil {
+	if err := w.writer.Flush(); err != nil {
 		return err
 	}
 	return w.f.Sync()
@@ -82,12 +84,14 @@ func (w *FileWriter) Rotate() error {
 		return nil
 	}
 
-	fullPath := filepath.Join(w.dir, fmt.Sprintf("%s.log", w.filename))
+	w.Sync()
 
 	// Close the current file before renaming
 	if err := w.f.Close(); err != nil {
 		return err
 	}
+
+	fullPath := filepath.Join(w.dir, fmt.Sprintf("%s.log", w.filename))
 
 	// Check if the file exists before renaming
 	if _, err := os.Stat(fullPath); err == nil {
@@ -104,7 +108,8 @@ func (w *FileWriter) Rotate() error {
 	}
 
 	w.f = file
-	w.Writer = *bufio.NewWriterSize(w.f, 256*1024)
+	w.fileSize = 0
+	w.writer = bufio.NewWriterSize(w.f, 256*1024)
 	return nil
 }
 
@@ -131,21 +136,20 @@ func (w *FileWriter) InitFile() error {
 		return err
 	}
 
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
 	w.f = file
-	w.Writer = *bufio.NewWriterSize(w.f, 256*1024)
+	w.fileSize = stat.Size()
+	w.writer = bufio.NewWriterSize(w.f, 256*1024) // 256KB
 
 	return nil
 }
 
 func (w *FileWriter) checkSize() bool {
-	info, err := w.f.Stat()
-	if err != nil {
-		return false
-	}
-	if info.Size() >= int64(w.maxSize) {
-		return true
-	}
-	return false
+	return w.fileSize >= int64(w.maxSize)
 }
 
 func checkSameDay(t1, t2 time.Time) bool {

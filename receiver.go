@@ -7,23 +7,22 @@ import (
 )
 
 type Receiver interface {
-	Put(LogEntry) error
+	Put(*BytesBuffer) error
 	Close() error
 }
 
 type normalReceiver struct {
 	WriterSync
-	level        slog.Level
-	entries      chan LogEntry
-	cacheEntries []LogEntry
+	ch           chan *BytesBuffer
+	cacheEntries []*BytesBuffer
 	wg           sync.WaitGroup
 }
 
-func NewNormalReceiver(writer WriterSync, level slog.Level) Receiver {
+func NewNormalReceiver(writer WriterSync) Receiver {
 	r := &normalReceiver{
 		WriterSync:   writer,
-		entries:      make(chan LogEntry, 1024),
-		cacheEntries: make([]LogEntry, 0, 128),
+		ch:           make(chan *BytesBuffer, 1024),
+		cacheEntries: make([]*BytesBuffer, 0, 128),
 	}
 
 	r.run()
@@ -41,13 +40,13 @@ func (r *normalReceiver) run() {
 		defer ticker.Stop()
 		for {
 			select {
-			case entry, ok := <-r.entries:
+			case entry, ok := <-r.ch:
 				if !ok {
 					r.flush()
 					return
 				}
 				r.cacheEntries = append(r.cacheEntries, entry)
-				if entry.Level == slog.LevelError {
+				if entry.Level() == slog.LevelError {
 					r.flush()
 				}
 			case <-ticker.C:
@@ -59,26 +58,24 @@ func (r *normalReceiver) run() {
 
 func (r *normalReceiver) flush() {
 	for _, entry := range r.cacheEntries {
-		if entry.Level < r.level {
-			continue
-		}
-		r.Write([]byte(entry.String()))
+		r.Write(entry.Bytes())
+		PutBytesBuffer(entry)
 	}
 	r.Sync()
 	if cap(r.cacheEntries) >= 256 {
-		r.cacheEntries = make([]LogEntry, 0, 128)
+		r.cacheEntries = make([]*BytesBuffer, 0, 128)
 	} else {
 		r.cacheEntries = r.cacheEntries[:0]
 	}
 }
 
-func (r *normalReceiver) Put(entry LogEntry) error {
-	r.entries <- entry
+func (r *normalReceiver) Put(entry *BytesBuffer) error {
+	r.ch <- entry
 	return nil
 }
 
 func (r *normalReceiver) Close() error {
-	close(r.entries)
+	close(r.ch)
 	r.wg.Wait()
 	r.WriterSync.Close()
 	return nil
