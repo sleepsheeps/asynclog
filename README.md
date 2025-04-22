@@ -33,9 +33,9 @@ slog.SetDefault(slog.New(handler))
 // 记录日志
 slog.Info("Hello, asynclog!")
 slog.Error("Something went wrong", "error", err)
-```
+````
 
-```go
+````go
 package main
 import (
 "github.com/yourusername/asynclog"
@@ -54,4 +54,4 @@ defer handler.Close()
 slog.SetDefault(slog.New(handler))
 // 记录日志
 slog.Info("This will be written to app.log")
-```
+````
