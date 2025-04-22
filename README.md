@@ -34,7 +34,6 @@ slog.SetDefault(slog.New(handler))
 slog.Info("Hello, asynclog!")
 slog.Error("Something went wrong", "error", err)
 ```
-````
 
 ```go
 package main
